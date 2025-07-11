@@ -56,7 +56,8 @@ class WordleEnv(gym.Env):
         base = Path(__file__).parent
 
         self.allowed: List[str] = [w.strip().lower() for w in open(base / "data/valid_guesses.txt")]
-        self.solutions: List[str] = []
+        self.solutions = [w.strip().lower() for w in open(base / "data/valid_answers.txt")]
+
         if calendar is not None:
             self.calendar = calendar
             self.solutions = [calendar[d] for d in sorted(calendar)]
@@ -112,13 +113,13 @@ class WordleEnv(gym.Env):
             pool = self.solutions or self.allowed
             self._answer = self.rng.choice(pool)
 
-        full_set = self.solutions or self.allowed
+        full_set = self.solutions
         self._candidate_set = set(full_set)
         self._potential     = -math.log2(len(self._candidate_set))
 
         return self._board.copy(), {}
     
-    def step(self, action: int, alpha: float = 1.0):
+    def step(self, action: int, alpha: float = 0.3):
         assert self._answer is not None, "call reset() first"
         guess = self.allowed[action]
 
