@@ -2,12 +2,16 @@ from __future__ import annotations
 import datetime as dt
 import random
 import math
+import string
 from pathlib import Path
 from typing import List, Tuple, Dict
 
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+
+LETTER2IDX = {c: i for i, c in enumerate(string.ascii_lowercase)}
+PAD_TOKEN   = 26
 
 def evaluate_guess(guess: str, answer: str) -> np.ndarray:
     '''
@@ -48,6 +52,8 @@ class WordleEnv(gym.Env):
             calendar: Dict[dt.date, str] | None = None,
             seed: int = 100,
             eval_mode: bool = False,
+            alpha: float = 1.0,
+            green_bonus: float = 0.1
     ):
         super().__init__()
         self.rng = random.Random(seed)
@@ -58,6 +64,10 @@ class WordleEnv(gym.Env):
         self.allowed: List[str] = [w.strip().lower() for w in open(base / "data/valid_guesses.txt")]
         self.solutions = [w.strip().lower() for w in open(base / "data/valid_answers.txt")]
 
+        small_solutions = self.solutions[:20]
+        self.solutions = small_solutions
+        self.allowed = small_solutions
+
         if calendar is not None:
             self.calendar = calendar
             self.solutions = [calendar[d] for d in sorted(calendar)]
@@ -67,20 +77,26 @@ class WordleEnv(gym.Env):
         self._candidate_set = set(self.solutions)  # start full
         self._potential = -np.log2(len(self._candidate_set))
 
+        self._colours = np.full((6, 5), -1,  dtype=np.int8)
+        self._letters = np.full((6, 5), PAD_TOKEN, dtype=np.int8)
 
         self.action_space = spaces.Discrete(len(self.allowed))
         self.observation_space = spaces.Box(
-            low = -1,
-            high = 2,
-            shape = (6, 5),
-            dtype = np.int8
+            low  = -1,
+            high = 26,
+            shape = (6, 5, 2),
+            dtype = np.int8,
         )
 
         # state
         self._answer: str | None = target
         self._eval_mode = eval_mode
-        self._board = np.full((6,5), -1, dtype=np.int8)
         self._guess_index = 0
+        self.alpha = alpha
+        self.green_bonus = green_bonus
+
+    def _obs(self) -> np.ndarray:            # helper
+        return np.stack((self._letters, self._colours), axis=-1)     
     
     def _update_candidates(self, guess, fb):
         def match(word):
@@ -98,7 +114,8 @@ class WordleEnv(gym.Env):
             options = None
     ) -> Tuple[np.ndarray, Dict]:
         super().reset(seed=seed)
-        self._board[:] = -1
+        self._colours.fill(-1)
+        self._letters.fill(PAD_TOKEN)
         self._guess_index = 0
 
         # if it's eval mode we choose today's word
@@ -117,17 +134,20 @@ class WordleEnv(gym.Env):
         self._candidate_set = set(full_set)
         self._potential     = -math.log2(len(self._candidate_set))
 
-        return self._board.copy(), {}
+        return self._obs(), {}
     
     def step(self, action: int, alpha: float = 0.3):
         assert self._answer is not None, "call reset() first"
         guess = self.allowed[action]
 
+        guess = self.allowed[action]
 
+        for j, ch in enumerate(guess):
+            self._letters[self._guess_index, j] = LETTER2IDX[ch]
 
         # colour feedback & update board
         fb = evaluate_guess(guess, self._answer)
-        self._board[self._guess_index] = fb
+        self._colours[self._guess_index] = fb
         self._guess_index += 1
 
         terminated = bool((fb == 2).all() or self._guess_index == 6)
@@ -141,11 +161,12 @@ class WordleEnv(gym.Env):
             prev_H = math.log2(max(len(self._candidate_set), 1))
             self._update_candidates(guess, fb)
             new_H  = math.log2(max(len(self._candidate_set), 1))
+            reward += self.alpha * (prev_H - new_H)
 
-            info_gain = prev_H - new_H              # bits won this turn
-            reward += alpha * info_gain
+            # extra shaping – reward each green tile immediately
+            reward += self.green_bonus * np.sum(fb == 2)
 
-        return self._board.copy(), reward, terminated, False, {
+        return self._obs(), reward, terminated, False, {
             "guess": guess,
             "answer": self._answer,
             "step": self._guess_index,
@@ -155,7 +176,7 @@ class WordleEnv(gym.Env):
         if mode != "ansi":
             raise NotImplementedError
         symbols = { -1: "·", 0: "⬜", 1: "🟨", 2: "🟩" }
-        lines = ["".join(symbols[v] for v in row) for row in self._board]
+        lines = ["".join(symbols[v] for v in row) for row in self._colours]
         return "\n".join(lines)
     
     def close(self):
