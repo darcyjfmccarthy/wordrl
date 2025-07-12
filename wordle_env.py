@@ -64,7 +64,7 @@ class WordleEnv(gym.Env):
         self.allowed: List[str] = [w.strip().lower() for w in open(base / "data/valid_guesses.txt")]
         self.solutions = [w.strip().lower() for w in open(base / "data/valid_answers.txt")]
 
-        small_solutions = self.solutions[:20]
+        small_solutions = self.solutions[:200]
         self.solutions = small_solutions
         self.allowed = small_solutions
 
@@ -133,15 +133,14 @@ class WordleEnv(gym.Env):
         full_set = self.solutions
         self._candidate_set = set(full_set)
         self._potential     = -math.log2(len(self._candidate_set))
+        self._already_guessed = set()
 
         return self._obs(), {}
     
     def step(self, action: int, alpha: float = 0.3):
         assert self._answer is not None, "call reset() first"
         guess = self.allowed[action]
-
-        guess = self.allowed[action]
-
+        
         for j, ch in enumerate(guess):
             self._letters[self._guess_index, j] = LETTER2IDX[ch]
 
@@ -165,6 +164,11 @@ class WordleEnv(gym.Env):
 
             # extra shaping – reward each green tile immediately
             reward += self.green_bonus * np.sum(fb == 2)
+
+        if guess in self._already_guessed:
+            reward -= 1.0
+        else:
+            self._already_guessed.add(guess)
 
         return self._obs(), reward, terminated, False, {
             "guess": guess,
