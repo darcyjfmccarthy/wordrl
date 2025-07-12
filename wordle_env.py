@@ -55,7 +55,7 @@ class WordleEnv(gym.Env):
             calendar: Dict[dt.date, str] | None = None,
             seed: int = 100,
             eval_mode: bool = False,
-            alpha: float = 1.0,
+            alpha: float = 0.1,
             green_bonus: float = 0.1
     ):
         super().__init__()
@@ -140,7 +140,7 @@ class WordleEnv(gym.Env):
 
         return self._obs(), {}
     
-    def step(self, action: int, alpha: float = 0.3):
+    def step(self, action: int, alpha: float = 0.1):
         assert self._answer is not None, "call reset() first"
         guess = self.allowed[action]
         
@@ -150,23 +150,17 @@ class WordleEnv(gym.Env):
         # colour feedback & update board
         fb = evaluate_guess(guess, self._answer)
         self._colours[self._guess_index] = fb
+        
+        prev_H = math.log2(max(len(self._candidate_set), 1))
+        self._update_candidates(guess, fb)
+        new_H  = math.log2(max(len(self._candidate_set), 1))
+        reward = self.alpha * (prev_H - new_H)           # ← moved up
+        reward += self.green_bonus * np.sum(fb == 2)
+
         self._guess_index += 1
-
         terminated = bool((fb == 2).all() or self._guess_index == 6)
-        reward = 0
         if terminated:
-            if (fb == 2).all():     # win
-                reward = 7 - self._guess_index     # 6,5,…,1
-            else:                   # fail
-                reward = -1
-        else:
-            prev_H = math.log2(max(len(self._candidate_set), 1))
-            self._update_candidates(guess, fb)
-            new_H  = math.log2(max(len(self._candidate_set), 1))
-            reward += self.alpha * (prev_H - new_H)
-
-            # extra shaping – reward each green tile immediately
-            reward += self.green_bonus * np.sum(fb == 2)
+            reward += (7 - self._guess_index) if (fb == 2).all() else -1
 
         if guess in self._already_guessed:
             reward -= 1.0
@@ -212,6 +206,6 @@ class WordleTokens(BaseFeaturesExtractor):
         x = torch.cat(
             (self.let_emb(letters), self.col_emb(colours)), dim=-1
         ).view(obs.size(0), 30, -1) + self.pos_emb         # (B,30,20)
-        
+
         x = self.enc(x).mean(dim=1)                        # (B,20)
         return self.fc(x)
