@@ -1,14 +1,17 @@
 from __future__ import annotations
 import datetime as dt
 import random
+import torch
 import math
 import string
 from pathlib import Path
 from typing import List, Tuple, Dict
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+import torch.nn as nn
 
 LETTER2IDX = {c: i for i, c in enumerate(string.ascii_lowercase)}
 PAD_TOKEN   = 26
@@ -185,3 +188,30 @@ class WordleEnv(gym.Env):
     
     def close(self):
         pass
+
+class WordleTokens(BaseFeaturesExtractor):
+    def __init__(self, space: gym.spaces.Box, emb=16):
+        super().__init__(space, features_dim=256)
+        self.let_emb  = nn.Embedding(27, emb)      # 0-25 + <pad>
+        self.col_emb  = nn.Embedding(4,  4)
+        self.pos_emb  = nn.Parameter(torch.randn(30, emb+4))
+        self.enc      = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=emb+4, nhead=4, dim_feedforward=128,
+                batch_first=True, activation="gelu"
+            ), num_layers=4
+        )
+        self.fc = nn.Sequential(
+            nn.Linear(emb+4, 256), nn.ReLU(),
+        )
+
+    def forward(self, obs):
+        letters  = obs[..., 0].long()          # (B,6,5) → LongTensor
+        colours  = obs[..., 1].long().clamp(min=0)  # mask -1 → 0 for PAD
+
+        x = torch.cat(
+            (self.let_emb(letters), self.col_emb(colours)), dim=-1
+        ).view(obs.size(0), 30, -1) + self.pos_emb         # (B,30,20)
+        
+        x = self.enc(x).mean(dim=1)                        # (B,20)
+        return self.fc(x)
