@@ -110,6 +110,25 @@ class WordleEnv(gym.Env):
             return True
         self._candidate_set = {w for w in self._candidate_set if match(w)}
 
+    def _top_entropy_words(self, k=50):
+        C = np.array(list(self._candidate_set))
+        feedback_lookup = np.zeros((len(self.allowed), len(C)), np.uint8)
+        # pre-compute 243 feedback patterns for speed and cache them
+        
+        H = np.zeros(len(self.allowed))
+        for i, g in enumerate(self.allowed):
+            # histogram of feedback strings for this guess
+            codes, counts = np.unique(feedback_lookup[i], return_counts=True)
+            probs = counts / counts.sum()
+            H[i] = -np.sum(probs * np.log2(probs))
+        top_idxs = np.argsort(H)[-k:]
+        return {self.allowed[i] for i in top_idxs}
+    
+    def action_masks(self):
+        probe_words = self._top_entropy_words()
+        legal_words = (self._candidate_set | probe_words) - self._already_guessed
+        return np.array([w in legal_words for w in self.allowed], dtype=bool)
+
     def reset(
             self,
             *,
@@ -138,7 +157,7 @@ class WordleEnv(gym.Env):
         self._potential     = -math.log2(len(self._candidate_set))
         self._already_guessed = set()
 
-        return self._obs(), {}
+        return self._obs(), {"action_mask":self.action_masks()}
     
     def step(self, action: int, alpha: float = 0.1):
         assert self._answer is not None, "call reset() first"
@@ -171,6 +190,7 @@ class WordleEnv(gym.Env):
             "guess": guess,
             "answer": self._answer,
             "step": self._guess_index,
+            "action_mask":self.action_masks()
         }
     
     def render(self, mode="ansi"):
