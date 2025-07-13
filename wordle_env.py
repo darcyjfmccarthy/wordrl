@@ -67,7 +67,7 @@ class WordleEnv(gym.Env):
         self.allowed: List[str] = [w.strip().lower() for w in open(base / "data/valid_guesses.txt")]
         self.solutions = [w.strip().lower() for w in open(base / "data/valid_answers.txt")]
 
-        small_solutions = self.solutions[:200]
+        small_solutions = self.solutions[:50]
         self.solutions = small_solutions
         self.allowed = small_solutions
 
